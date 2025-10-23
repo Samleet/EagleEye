@@ -64,14 +64,9 @@ class EagleWorker(
                 // TODO: embed in metadata
 
                 return Result.success()
-
-            } else {
-
-                Log.w("EagleEye", "⚠️ Unable to retrieve live GPS: $data")
-                
-                return Result.failure()
-
             }
+
+            return Result.failure()
 
         } catch (e: Exception) {
 
@@ -118,14 +113,9 @@ class EagleWorker(
                 // TODO: embed in metadata
 
                 return Result.success()
-
-            } else {
-
-                Log.w("EagleEye", "⚠️ Unable to retrieve live GPS: $data")
-                
-                return Result.failure()
-
             }
+
+            return Result.failure()
 
         } catch (e: Exception) {
 

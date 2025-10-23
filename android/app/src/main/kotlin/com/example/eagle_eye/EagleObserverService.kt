@@ -14,6 +14,12 @@ import android.os.IBinder
 import android.provider.MediaStore
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
+import androidx.work.workDataOf
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.ExistingPeriodicWorkPolicy
+import java.util.concurrent.TimeUnit
 import org.json.JSONObject
 import java.io.File
 import android.database.Cursor
@@ -30,8 +36,13 @@ class EagleObserverService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        
         startForegroundService()
-        registerMediaObservers()
+    }
+    
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        startForegroundService()
+        return START_STICKY
     }
 
     private fun startForegroundService() {
@@ -51,82 +62,133 @@ class EagleObserverService : Service() {
 
         val notification: Notification = NotificationCompat.Builder(this, channelId)
             .setContentTitle("Eagle Eye Running...")
-            .setContentText("Monitoring new photos and videos...")
+            .setContentText("Monitoring new photos and videos")
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .build()
 
         startForeground(1, notification)
+        registerMediaObservers()
+        scheduleServiceMonitor()
     }
 
     private fun registerMediaObservers() {
+        Log.d("EagleEye", "Registering Observers...")
         val handler = Handler(Looper.getMainLooper())
         val intent = Intent("com.techsoft.eagle_eye.MEDIA_EVENT")
 
         // Observe new images
-        imageObserver = object : ContentObserver(handler) {
-            override fun onChange(selfChange: Boolean, uri: Uri?) {
-                super.onChange(selfChange, uri)
-                uri?.let {
-                    val now = System.currentTimeMillis()
-                    val path = getRealPathFromUri(it)
-                    val sameAsLast = (it.toString() == lastUri)
-                    val json = JSONObject(
-                        mapOf(
-                        "method" to "eagle.media", 
-                        "data" to path
-                    )).toString()
+        if (!this::imageObserver.isInitialized) {
+            imageObserver = object : ContentObserver(handler) {
+                override fun onChange(selfChange: Boolean, uri: Uri?) {
+                    Log.d("EagleEye", "imageObserver fired!")
+                    super.onChange(selfChange, uri)
 
-                    lastUri = it.toString()
+                    uri?.let {
+                        val now = System.currentTimeMillis()
+                        val path = getRealPathFromUri(it)
+                        val sameAsLast = (it.toString() == lastUri)
+                        val method = "eagle.media";
+                        
+                        val json = JSONObject(
+                            mapOf(
+                            "method" to method, 
+                            "data" to path
+                        )).toString()
 
-                    if (sameAsLast == true) {
-                        return
+                        if (sameAsLast == true) {
+                            return
+                        }
+
+                        lastUri = it.toString()
+
+                        Log.d("EagleObserver", "📸 New image detected: $uri")
+
+                        dispatchWorkManager(
+                            method, 
+                            path
+                        )
+                        
+                        intent.putExtra("data", json)
+                        sendBroadcast(intent)
                     }
-
-                    Log.d("EagleObserver", "📸 New image detected: $uri")
-
-                    intent.putExtra("data", json)
-                    sendBroadcast(intent)
-
                 }
             }
+
+            contentResolver.registerContentObserver(
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI, true, imageObserver
+            )
         }
 
         // Observe new videos
-        videoObserver = object : ContentObserver(handler) {
-            override fun onChange(selfChange: Boolean, uri: Uri?) {
-                super.onChange(selfChange, uri)
-                uri?.let {
-                    val now = System.currentTimeMillis()
-                    val path = getRealPathFromUri(it)
-                    val sameAsLast = (it.toString() == lastUri)
-                    val json = JSONObject(
-                        mapOf(
-                        "method" to "eagle.media", 
-                        "data" to path
-                    )).toString()
+        if (!this::videoObserver.isInitialized) {
+            videoObserver = object : ContentObserver(handler) {
+                override fun onChange(selfChange: Boolean, uri: Uri?) {
+                    super.onChange(selfChange, uri)
+                    Log.d("EagleEye", "videoObserver fired!")
 
-                    lastUri = it.toString()
+                    uri?.let {
+                        val now = System.currentTimeMillis()
+                        val path = getRealPathFromUri(it)
+                        val sameAsLast = (it.toString() == lastUri)
+                        val method = "eagle.media";
 
-                    if (sameAsLast == true) {
-                        return
+                        val json = JSONObject(
+                            mapOf(
+                            "method" to method, 
+                            "data" to path
+                        )).toString()
+
+                        if (sameAsLast == true) {
+                            return
+                        }
+
+                        lastUri = it.toString()
+
+                        Log.d("EagleObserver", "🎥 New video detected: $uri")
+
+                        dispatchWorkManager(
+                            method, 
+                            path
+                        )
+
+                        intent.putExtra("data", json)
+                        sendBroadcast(intent)
                     }
-
-                    Log.d("EagleObserver", "🎥 New video detected: $uri")
-
-                    intent.putExtra("data", json)
-                    sendBroadcast(intent)
                 }
             }
+
+            contentResolver.registerContentObserver(
+                MediaStore.Video.Media.EXTERNAL_CONTENT_URI, true, videoObserver
+            )
         }
+    }
 
-        // Register observers
-        contentResolver.registerContentObserver(
-            MediaStore.Images.Media.EXTERNAL_CONTENT_URI, true, imageObserver
-        )
+    private fun scheduleServiceMonitor() {
+        val work = PeriodicWorkRequestBuilder<RestartWorker>(
+            15, TimeUnit.MINUTES // Run every 15 minutes
+        ).build()
 
-        contentResolver.registerContentObserver(
-            MediaStore.Video.Media.EXTERNAL_CONTENT_URI, true, videoObserver
-        )
+        WorkManager.getInstance(applicationContext)
+            .enqueueUniquePeriodicWork(
+                "EagleRestartWorker",
+                ExistingPeriodicWorkPolicy.KEEP,
+                work
+            )
+    }
+
+    private fun dispatchWorkManager(method: String, value: Any?) {
+        // 🔹 Call WorkManager
+        val work = OneTimeWorkRequestBuilder<EagleWorker>()
+            .setInputData(
+                workDataOf(
+                    "method" to method,
+                    "data" to value
+                )
+            )
+            .build()
+
+        WorkManager.getInstance(applicationContext)
+            .enqueue(work)
     }
 
     private fun getRealPathFromUri(uri: Uri): String? {
@@ -145,8 +207,6 @@ class EagleObserverService : Service() {
             }
         } catch (e: Exception) {
             e.printStackTrace()
-
-            //fallback original
             filePath = uri.toString();
         }
     
