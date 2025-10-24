@@ -35,7 +35,7 @@ class EagleWorker(
         ) == PackageManager.PERMISSION_GRANTED
 
         if (!hasPermission) {
-            Log.w("EagleWorker", "❌ Location permission not granted")
+            Log.w("EagleEye", "❌ Location permission not granted")
             return Result.failure()
         }
 

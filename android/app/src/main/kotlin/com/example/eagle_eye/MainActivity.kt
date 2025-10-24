@@ -36,14 +36,8 @@ class MainActivity: FlutterActivity() {
             filter, 
             RECEIVER_EXPORTED
         )
-    }
 
-    override fun onStart() {
-        super.onStart()
-        // This runs every time the activity becomes visible
-        // (including after onCreate)
-        
-        // Request permissions here as app is fully visible
+        // Log.d("EagleEye", "Starting Eagle Eye service...")
         requestPermissions()
     }
 
@@ -53,15 +47,13 @@ class MainActivity: FlutterActivity() {
     }
 
     private fun startEagleService() {
-        // if (isServiceRunning(EagleObserverService::class.java)) {
-        //     Log.d("EagleEye", "Service Running...")
-        //     return
-        // }
+        if (isServiceRunning(EagleObserverService::class.java)) {
+            return
+        }
 
         val serviceIntent = Intent(
             this, EagleObserverService::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            Log.d("EagleEye", "Starting Observers...")
             startForegroundService(serviceIntent)
         } else {
             startService(serviceIntent)
@@ -71,7 +63,6 @@ class MainActivity: FlutterActivity() {
     private fun isServiceRunning(serviceClass: Class<*>): Boolean {
         val manager = getSystemService(Context.ACTIVITY_SERVICE) 
             as ActivityManager
-        
         for (service in manager.getRunningServices(Int.MAX_VALUE)) {
             if (serviceClass.name == service.service.className) {
                 return true
@@ -128,7 +119,7 @@ class MainActivity: FlutterActivity() {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, 
             grantResults)
-
+        
         permissions.forEachIndexed { index, permission ->
             val result = if (
                 grantResults[index] == PackageManager.PERMISSION_GRANTED
@@ -153,7 +144,6 @@ class MainActivity: FlutterActivity() {
 
             }
         }
-
     }
 
 }

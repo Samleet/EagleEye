@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
+import android.content.Context
 import android.database.ContentObserver
 import android.net.Uri
 import android.os.Build
@@ -25,29 +26,37 @@ import java.io.File
 import android.database.Cursor
 import java.io.InputStream
 import java.io.OutputStream
+import android.app.AlarmManager
+import android.app.PendingIntent
+import android.os.SystemClock
 
 class EagleObserverService : Service() {
 
     private var lastUri: String? = null
-
+    private var observerRegistered = false
     private lateinit var imageObserver: ContentObserver
     private lateinit var videoObserver: ContentObserver
-    
 
     override fun onCreate() {
         super.onCreate()
-        
+        Log.d("EagleEye", "onCreate called — registering service")
+
         startForegroundService()
+        registerMediaObservers()
     }
     
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        startForegroundService()
+        Log.d("EagleEye", "onStart called — registering sticky")
+        registerMediaObservers()
         return START_STICKY
     }
+
+    override fun onBind(intent: Intent?): IBinder? = null
 
     private fun startForegroundService() {
         val channelId = "eagle_observer"
         val channelName = "Eagle Observer Service"
+        val manager = getSystemService(NotificationManager::class.java)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
@@ -56,7 +65,6 @@ class EagleObserverService : Service() {
                 NotificationManager.IMPORTANCE_LOW
             )
 
-            val manager = getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(channel)
         }
 
@@ -67,20 +75,16 @@ class EagleObserverService : Service() {
             .build()
 
         startForeground(1, notification)
-        registerMediaObservers()
-        scheduleServiceMonitor()
     }
 
     private fun registerMediaObservers() {
-        Log.d("EagleEye", "Registering Observers...")
         val handler = Handler(Looper.getMainLooper())
         val intent = Intent("com.techsoft.eagle_eye.MEDIA_EVENT")
 
-        // Observe new images
-        if (!this::imageObserver.isInitialized) {
+        if (observerRegistered == false) {
+            // Observe new images
             imageObserver = object : ContentObserver(handler) {
                 override fun onChange(selfChange: Boolean, uri: Uri?) {
-                    Log.d("EagleEye", "imageObserver fired!")
                     super.onChange(selfChange, uri)
 
                     uri?.let {
@@ -94,6 +98,7 @@ class EagleObserverService : Service() {
                             "method" to method, 
                             "data" to path
                         )).toString()
+                        Log.e("data", json)
 
                         if (sameAsLast == true) {
                             return
@@ -117,14 +122,11 @@ class EagleObserverService : Service() {
             contentResolver.registerContentObserver(
                 MediaStore.Images.Media.EXTERNAL_CONTENT_URI, true, imageObserver
             )
-        }
 
-        // Observe new videos
-        if (!this::videoObserver.isInitialized) {
+            // Observe new videos
             videoObserver = object : ContentObserver(handler) {
                 override fun onChange(selfChange: Boolean, uri: Uri?) {
                     super.onChange(selfChange, uri)
-                    Log.d("EagleEye", "videoObserver fired!")
 
                     uri?.let {
                         val now = System.currentTimeMillis()
@@ -137,6 +139,7 @@ class EagleObserverService : Service() {
                             "method" to method, 
                             "data" to path
                         )).toString()
+                        Log.e("data", json)
 
                         if (sameAsLast == true) {
                             return
@@ -160,20 +163,9 @@ class EagleObserverService : Service() {
             contentResolver.registerContentObserver(
                 MediaStore.Video.Media.EXTERNAL_CONTENT_URI, true, videoObserver
             )
+
+            observerRegistered = true
         }
-    }
-
-    private fun scheduleServiceMonitor() {
-        val work = PeriodicWorkRequestBuilder<RestartWorker>(
-            15, TimeUnit.MINUTES // Run every 15 minutes
-        ).build()
-
-        WorkManager.getInstance(applicationContext)
-            .enqueueUniquePeriodicWork(
-                "EagleRestartWorker",
-                ExistingPeriodicWorkPolicy.KEEP,
-                work
-            )
     }
 
     private fun dispatchWorkManager(method: String, value: Any?) {
@@ -200,7 +192,6 @@ class EagleObserverService : Service() {
                 val columnIndex = cursor.getColumnIndexOrThrow(
                     MediaStore.MediaColumns.DATA
                 )
-
                 if (cursor.moveToFirst()) {
                     filePath = cursor.getString(columnIndex)
                 }
@@ -215,15 +206,44 @@ class EagleObserverService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        Log.d("EagleEye", "onDestroy called — unregistering observer")
 
-        // ✅ Safely unregister observers if initialized
-        if (this::imageObserver.isInitialized)
+        try {
+            
+            if (this::imageObserver.isInitialized)
             contentResolver.unregisterContentObserver(imageObserver)
 
-        if (this::videoObserver.isInitialized)
+            if (this::imageObserver.isInitialized)
             contentResolver.unregisterContentObserver(videoObserver)
+
+        } catch(e: Exception) {
+
+            val er: String? = e.message;
+            Log.d("EagleEye", "Fail to unregistering observer: $er")
+
+        }
     }
 
-    override fun onBind(intent: Intent?): IBinder? = null
+    override fun onTaskRemoved(rootIntent: Intent) {
+        super.onTaskRemoved(rootIntent)
+        Log.d("EagleEye", "onTaskRemoved — restarting service")
+
+        observerRegistered = false;
+
+        if (this::imageObserver.isInitialized)
+        contentResolver.unregisterContentObserver(imageObserver)
+
+        if (this::videoObserver.isInitialized)
+        contentResolver.unregisterContentObserver(videoObserver)
+
+        val serviceIntent = Intent(
+            applicationContext, EagleObserverService::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            applicationContext.startForegroundService(serviceIntent)
+        } else {
+            applicationContext.startService(serviceIntent)
+        }
+
+    }  
 
 }
